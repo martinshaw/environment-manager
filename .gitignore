@@ -1,0 +1,5 @@
+/envm
+/envm.exe
+/dist/
+.env
+.DS_Store
