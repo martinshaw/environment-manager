@@ -12,6 +12,7 @@ import (
 	"martinshaw.co/environment-manager/internal/pending"
 	"martinshaw.co/environment-manager/internal/store"
 	"martinshaw.co/environment-manager/internal/tui"
+	"martinshaw.co/environment-manager/internal/upgrade"
 	"martinshaw.co/environment-manager/internal/watch"
 )
 
@@ -26,7 +27,7 @@ func newRoot(version string) *cobra.Command {
 		Short: "Manage versioned .env files for local projects",
 		Long: `envm stores named, versioned .env files for projects under the directories you choose.
 
-The TUI searches projects, stored env files, and versions. Commands that read or write .env use the current directory to find the project.`,
+The TUI searches projects, stored env files, and versions. Commands that read or write .env use the directory the terminal is in (pwd) to find the project.`,
 		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return tui.Run(tui.Options{Version: version})
@@ -41,6 +42,7 @@ The TUI searches projects, stored env files, and versions. Commands that read or
 		driftCmd(version),
 		rootsCmd(),
 		daemonCmd(),
+		upgradeCmd(version),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the envm version",
@@ -350,6 +352,45 @@ func daemonCmd() *cobra.Command {
 	return cmd
 }
 
+func upgradeCmd(version string) *cobra.Command {
+	var check bool
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Install the latest envm release from GitHub",
+		Long: `Download the release archive for this operating system, check it against checksums.txt, and replace the current envm binary.
+
+envm update stores a new version of the selected .env file. envm upgrade replaces the envm program itself.
+
+A running watcher is restarted so it loads the new binary. If the binary moved to a different path, run envm daemon install again.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			res, err := upgrade.Run(cmd.Context(), upgrade.Options{
+				Current:   version,
+				CheckOnly: check,
+				Stdout:    cmd.OutOrStdout(),
+			})
+			if err != nil {
+				return err
+			}
+			if !res.Updated {
+				return nil
+			}
+			dir, err := store.DefaultDir()
+			if err != nil || !daemon.Running(dir) {
+				return nil
+			}
+			if err := daemon.Stop(dir); err != nil || daemon.Start(dir) != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Updated the binary. Restart the watcher with envm daemon start.")
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Restarted the watcher.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&check, "check", false, "Report the latest release without installing it")
+	return cmd
+}
+
 func openStore() (*store.Store, error) {
 	dir, err := store.DefaultDir()
 	if err != nil {
@@ -363,7 +404,7 @@ func withProject(fn func(*store.Store, store.Project) error) error {
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
+	cwd, err := store.TerminalDir()
 	if err != nil {
 		return err
 	}

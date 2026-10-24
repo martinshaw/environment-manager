@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -57,53 +58,56 @@ type Options struct {
 }
 
 type Model struct {
-	dir         string
-	cwd         string
-	version     string
-	ctx         context.Context
-	store       *store.Store
-	data        store.Data
-	width       int
-	height      int
-	mode        mode
-	focus       focus
-	projectID   string
-	envID       string
-	versionN    int
-	projectCur  int
-	envCur      int
-	versionCur  int
-	projectQ    string
-	envQ        string
-	versionQ    string
-	lineCur     int
-	lineOff     int
-	content     []byte
-	contentKey  string
-	diskHash    string
-	input       textinput.Model
-	editor      textarea.Model
-	viewport    viewport.Model
-	help        help.Model
-	keys        keyMap
-	errMsg      string
-	status      string
-	pass1       string
-	recoveryKey string
-	useRecovery bool
-	wizard      bool
-	returnMode  mode
-	searchQ     string
-	hits        []int
-	hitAt       int
-	events      []pending.Event
-	eventIdx    int
-	snooze      map[string]bool
-	confirmText string
-	deleteKind  string
-	lintIssues  []dotenv.Issue
-	settingCur  int
-	ready       bool
+	dir            string
+	cwd            string
+	version        string
+	ctx            context.Context
+	store          *store.Store
+	data           store.Data
+	width          int
+	height         int
+	mode           mode
+	focus          focus
+	projectID      string
+	envID          string
+	versionN       int
+	projectCur     int
+	envCur         int
+	versionCur     int
+	projectQ       string
+	envQ           string
+	versionQ       string
+	lineCur        int
+	lineOff        int
+	content        []byte
+	contentKey     string
+	draft          []byte
+	diskHash       string
+	input          textinput.Model
+	editor         textarea.Model
+	viewport       viewport.Model
+	help           help.Model
+	keys           keyMap
+	errMsg         string
+	status         string
+	pass1          string
+	recoveryKey    string
+	recoveryCopied bool
+	useRecovery    bool
+	wizard         bool
+	setup          bool
+	returnMode     mode
+	searchQ        string
+	hits           []int
+	hitAt          int
+	events         []pending.Event
+	eventIdx       int
+	snooze         map[string]bool
+	confirmText    string
+	deleteKind     string
+	lintIssues     []dotenv.Issue
+	settingCur     int
+	ready          bool
 }
 
 func newModel(dir, cwd, version string, ctx context.Context, st *store.Store) Model {
@@ -127,6 +131,7 @@ func newModel(dir, cwd, version string, ctx context.Context, st *store.Store) Mo
 	}
 	if !store.Initialized(dir) {
 		m.mode = modeCreatePass
+		m.setup = true
 	}
 	m.preparePrompt()
 	m.input.Focus()
@@ -256,12 +261,29 @@ func (m *Model) versionRows() []Row {
 		rows = append(rows, Row{
 			ID:     strconv.Itoa(v.N),
 			N:      v.N,
-			Label:  "v" + strconv.Itoa(v.N),
+			Label:  versionLabel(v),
 			Pinned: v.N == latest,
 			Note:   note,
 		})
 	}
 	return FilterRows(rows, m.versionQ)
+}
+
+// versionLabel is the version number plus the local time it was stored.
+func versionLabel(v store.Version) string {
+	label := "v" + strconv.Itoa(v.N)
+	if v.CreatedAt.IsZero() {
+		return label
+	}
+	return label + "  " + shortWhen(v.CreatedAt)
+}
+
+func shortWhen(t time.Time) string {
+	local := t.Local()
+	if local.Year() == time.Now().Year() {
+		return local.Format("2 Jan 15:04")
+	}
+	return local.Format("2 Jan 2006 15:04")
 }
 
 func (m *Model) currentVersion() *store.Version {
@@ -370,7 +392,7 @@ func (m *Model) recomputeHits() {
 	if q == "" {
 		return
 	}
-	lines, _ := dotenv.Lines(string(m.content))
+	lines, _ := dotenv.Lines(string(m.shown()))
 	for i, line := range lines {
 		if strings.Contains(strings.ToLower(line), q) {
 			m.hits = append(m.hits, i)
@@ -378,8 +400,15 @@ func (m *Model) recomputeHits() {
 	}
 }
 
+func (m *Model) shown() []byte {
+	if m.draft != nil {
+		return m.draft
+	}
+	return m.content
+}
+
 func (m *Model) contentLines() []string {
-	lines, _ := dotenv.Lines(string(m.content))
+	lines, _ := dotenv.Lines(string(m.shown()))
 	return lines
 }
 

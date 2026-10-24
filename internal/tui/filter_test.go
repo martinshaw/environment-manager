@@ -16,10 +16,10 @@ func TestFilterRowsPinnedEmptyQuery(t *testing.T) {
 
 func TestFilterRowsPinnedTie(t *testing.T) {
 	rows := []Row{
-		{ID: "other", Label: "AdviserHub"},
-		{ID: "cwd", Label: "AdviserHub", Pinned: true},
+		{ID: "other", Label: "Todo App"},
+		{ID: "cwd", Label: "Todo App", Pinned: true},
 	}
-	got := FilterRows(rows, "AdviserHub")
+	got := FilterRows(rows, "Todo App")
 	if len(got) != 2 {
 		t.Fatal(len(got))
 	}

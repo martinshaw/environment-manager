@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"martinshaw.co/environment-manager/internal/dotenv"
 	"martinshaw.co/environment-manager/internal/pending"
 )
@@ -13,32 +14,57 @@ func (m Model) View() string {
 	if !m.ready || m.width == 0 || m.height == 0 {
 		return "Starting envm…\n"
 	}
+	if m.mode == modeShowRecovery {
+		return m.recoveryView()
+	}
+	var body string
 	switch m.mode {
 	case modeUnlock, modeCreatePass, modeConfirmPass:
-		return m.centered(m.passBody())
-	case modeShowRecovery:
-		return m.centered(m.recoveryBody())
+		body = m.centered(m.passBody())
 	case modeAddRoot, modeRename, modePath, modeNewEnv:
-		return m.centered(m.promptBody())
+		body = m.centered(m.promptBody())
 	case modeHelp:
-		return m.helpBody()
+		body = m.helpBody()
 	case modeLint:
-		return m.lintBody()
+		body = m.lintBody()
 	case modeCopy:
-		return m.copyBody()
+		body = m.copyBody()
 	case modeConfirm:
-		return m.centered(m.confirmText + "\n\ny confirm    n cancel")
+		body = m.centered(m.confirmText + "\n\ny confirm    n cancel")
 	case modeDiff:
-		return m.diffBody()
+		body = m.diffBody()
 	case modeEdit:
-		return m.editBody()
+		body = m.editBody()
 	case modeDrift:
-		return m.driftBody()
+		body = m.driftBody()
 	case modeSettings:
-		return m.settingsBody()
+		body = m.settingsBody()
 	default:
-		return m.browserBody()
+		body = m.browserBody()
 	}
+	return clampView(body, m.width, m.height)
+}
+
+// clampView keeps the top of the screen, including the edit actions, inside
+// the terminal. A line wider than the screen would wrap and scroll that top
+// row away.
+func clampView(view string, width, height int) string {
+	if width < 1 || height < 1 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i, line := range lines {
+		if lipgloss.Width(line) > width {
+			lines[i] = ansi.Truncate(line, width, "")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) centered(body string) string {
@@ -64,10 +90,24 @@ func (m Model) passBody() string {
 	return body
 }
 
-func (m Model) recoveryBody() string {
-	return titleStyle.Render("Recovery key") + "\n\n" +
-		errStyle.Render("Shown once. Store it somewhere safe. A forgotten passphrase cannot be undone without this key.") +
-		"\n\n" + m.recoveryKey + "\n\n" + dimStyle.Render("Press enter to continue.")
+func (m Model) recoveryView() string {
+	keyLine := strings.TrimSpace(m.recoveryKey)
+	copied := "Copied to the clipboard."
+	if !m.recoveryCopied {
+		copied = "Clipboard copy failed. The key below is one line, with nothing else on it."
+	}
+	box := boxStyle.Width(min(m.width-4, 72)).Render(
+		titleStyle.Render("Recovery key") + "\n\n" +
+			errStyle.Render("Shown once. A forgotten passphrase cannot be undone without this key.") + "\n\n" +
+			copied + "\n\n" +
+			dimStyle.Render("Press enter to continue."),
+	)
+	height := m.height - 1
+	if height < 1 {
+		height = 1
+	}
+	placed := strings.TrimRight(lipgloss.Place(m.width, height, lipgloss.Center, lipgloss.Center, box), "\n")
+	return keyLine + "\n" + placed
 }
 
 func (m Model) promptBody() string {
@@ -85,7 +125,11 @@ func (m Model) promptBody() string {
 		title = "Project path"
 	case modeNewEnv:
 		title = "New env file"
-		help = "The name is for this stored .env, for example Staging AdviserHub. The current .env becomes v1 and is selected."
+		if m.draft != nil {
+			help = "The name is for a new env file. These comment changes become v1 and are selected."
+		} else {
+			help = "The name is for this stored .env, for example Staging Todo App. The current .env becomes v1 and is selected."
+		}
 	}
 	body := titleStyle.Render(title) + "\n\n" + m.input.View() + "\n\n" + dimStyle.Render(help)
 	if m.errMsg != "" {
@@ -193,11 +237,13 @@ func (m Model) mainPanel(width, height int) string {
 			title += " / " + env.Name
 		}
 		if ver != nil {
-			title += " / v" + fmt.Sprint(ver.N)
+			title += " / " + versionLabel(*ver)
 		}
 	}
 	banner := ""
-	if m.drifted() {
+	if m.draft != nil {
+		banner = okStyle.Render(draftHint) + "\n"
+	} else if m.drifted() {
 		banner = okStyle.Render("On-disk .env differs. u update   a save as new   R revert") + "\n"
 	}
 	body := banner + m.renderFile(width-4, height-5)
@@ -271,32 +317,52 @@ func styleLine(line string) string {
 func (m Model) footerLine() string {
 	switch m.mode {
 	case modeFilter:
-		return "filter " + m.input.View() + "  " + dimStyle.Render("enter keeps the filter, esc clears it")
+		return fitLine("filter "+m.input.View()+"  "+dimStyle.Render("enter keeps the filter, esc clears it"), m.width)
 	case modeSearch:
 		label := "search " + m.input.View()
 		if m.searchQ != "" {
 			label += fmt.Sprintf("  %d matches", len(m.hits))
 		}
-		return label
+		return fitLine(label, m.width)
 	}
 	if m.errMsg != "" {
-		return errStyle.Render(m.errMsg)
+		return fitLine(errStyle.Render(m.errMsg), m.width)
 	}
+	help := dimStyle.Render(m.help.View(m.keys))
 	if m.status != "" {
-		return m.status + "  " + dimStyle.Render(m.help.View(m.keys))
+		helpW := lipgloss.Width(help)
+		if helpW >= m.width {
+			return fitLine(help, m.width)
+		}
+		room := m.width - helpW - 2
+		status := m.status
+		if room < 1 {
+			return fitLine(help, m.width)
+		}
+		if lipgloss.Width(status) > room {
+			status = ansi.Truncate(status, room, "…")
+		}
+		return status + "  " + help
 	}
 	right := dimStyle.Render("envm " + m.version)
 	left := m.help.View(m.keys)
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		return left
+		return fitLine(left, m.width)
 	}
 	return left + strings.Repeat(" ", gap) + right
 }
 
+func fitLine(line string, width int) string {
+	if width < 1 || lipgloss.Width(line) <= width {
+		return line
+	}
+	return ansi.Truncate(line, width, "")
+}
+
 func (m Model) editBody() string {
-	title := "Edit    ctrl+s save    esc cancel"
-	return titleStyle.Render(title) + "\n" + m.editor.View()
+	actions := titleStyle.Render("Edit") + "    " + dimStyle.Render("ctrl+s save    esc cancel")
+	return fitLine(actions, m.width) + "\n" + m.editor.View()
 }
 
 func (m Model) diffBody() string {
@@ -352,9 +418,13 @@ func (m Model) driftBody() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n%s\n%s\n\n", titleStyle.Render(fmt.Sprintf("Pending %d of %d", m.eventIdx+1, len(m.events))), ev.Project, ev.Message)
 	if ev.Kind == pending.KindDrift {
-		b.WriteString("u  Update the selected env file\na  Save .env as a new file and select it\nR  Revert .env to the latest stored version\n")
+		if m.driftUnsaved(ev) {
+			b.WriteString("a  Save .env as a new file and select it\n")
+		} else {
+			b.WriteString("u  Update the selected env file\na  Save .env as a new file and select it\nR  Revert .env to the latest stored version\n")
+		}
 	} else {
-		b.WriteString("c  Copy a .env gitignore rule\n")
+		b.WriteString("c  Add .env to .gitignore\n")
 	}
 	b.WriteString("x  Dismiss\nesc  Back\n")
 	if len(m.events) > 1 {
@@ -362,6 +432,9 @@ func (m Model) driftBody() string {
 	}
 	if m.errMsg != "" {
 		b.WriteString("\n" + errStyle.Render(m.errMsg))
+	}
+	if m.status != "" {
+		b.WriteString("\n" + m.status)
 	}
 	return m.centered(b.String())
 }

@@ -33,9 +33,13 @@ var (
 	ErrExists      = errors.New("vault already exists")
 )
 
+// DefaultEnvName is the env file name used for a project's .env during first-run setup.
+const DefaultEnvName = "Local Development"
+
 // Config is the non-secret root list.
 type Config struct {
-	Roots []string `json:"roots"`
+	Roots     []string `json:"roots"`
+	SetupDone bool     `json:"setupDone,omitempty"`
 }
 
 // Project is one child directory of a root, or a directory the user pointed at.

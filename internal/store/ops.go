@@ -50,6 +50,89 @@ func (s *Store) UpdateFromDisk(projectID string) (envName string, version int, c
 	return envName, version, created, err
 }
 
+// ImportUnsaved stores the on-disk .env as name for every project that has a
+// .env and no selected env file. Projects that already have that name selected
+// are left alone. A project that already has the name, but nothing selected,
+// selects it.
+func (s *Store) ImportUnsaved(name string) (int, error) {
+	name, err := cleanName(name)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	_, err = s.withData(func(d *Data) error {
+		for i := range d.Projects {
+			p := &d.Projects[i]
+			if p.Missing || p.Selected() != nil {
+				continue
+			}
+			content, ok, err := ReadDisk(EnvPath(p.Path))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+			if existing := p.EnvByName(name); existing != nil {
+				p.SelectedEnvID = existing.ID
+				n++
+				continue
+			}
+			env := EnvFile{ID: uuid.NewString(), Name: name}
+			if _, _, err := s.addVersion(&env, content); err != nil {
+				return err
+			}
+			p.Envs = append(p.Envs, env)
+			p.SelectedEnvID = env.ID
+			n++
+		}
+		return nil
+	})
+	return n, err
+}
+
+// SetSetupDone records that first-run import has finished.
+func (s *Store) SetSetupDone() error {
+	_, err := s.withData(func(d *Data) error {
+		d.Config.SetupDone = true
+		return nil
+	})
+	return err
+}
+
+// ReadData loads metadata without the store lock. Callers that already hold
+// a coarser lock use it to see a rename that just landed.
+func ReadData(dir string) (Data, error) {
+	return (&Store{dir: dir}).load()
+}
+
+// NewFromContent stores content as a new named env at v1, selects it, and writes .env.
+func (s *Store) NewFromContent(projectID, name string, content []byte) (version int, err error) {
+	name, err = cleanName(name)
+	if err != nil {
+		return 0, err
+	}
+	_, err = s.withData(func(d *Data) error {
+		p := d.Project(projectID)
+		if p == nil {
+			return ErrNotFound
+		}
+		if p.EnvByName(name) != nil {
+			return ErrDuplicate
+		}
+		env := EnvFile{ID: uuid.NewString(), Name: name}
+		v, _, err := s.addVersion(&env, content)
+		if err != nil {
+			return err
+		}
+		p.Envs = append(p.Envs, env)
+		p.SelectedEnvID = env.ID
+		version = v.N
+		return WriteDisk(EnvPath(p.Path), content)
+	})
+	return version, err
+}
+
 // NewFromDisk stores the on-disk .env as a new named env at v1 and selects it.
 func (s *Store) NewFromDisk(projectID, name string) (version int, err error) {
 	name, err = cleanName(name)
@@ -82,6 +165,42 @@ func (s *Store) NewFromDisk(projectID, name string) (version int, err error) {
 		return nil
 	})
 	return version, err
+}
+
+// RestoreVersion makes version n current. When those bytes differ from the latest
+// snapshot, they are stored as the next version so older snapshots stay in order.
+// The env file becomes the selected one and .env is updated.
+func (s *Store) RestoreVersion(projectID, envID string, n int) (version int, created bool, err error) {
+	_, err = s.withData(func(d *Data) error {
+		p := d.Project(projectID)
+		if p == nil {
+			return ErrNotFound
+		}
+		env := p.Env(envID)
+		if env == nil {
+			return ErrNoEnv
+		}
+		ver := env.ByN(n)
+		if ver == nil {
+			return ErrNotFound
+		}
+		content, err := s.ReadBlob(ver.Blob)
+		if err != nil {
+			return err
+		}
+		v, made, err := s.addVersion(env, content)
+		if err != nil {
+			return err
+		}
+		if err := WriteDisk(EnvPath(p.Path), content); err != nil {
+			return err
+		}
+		p.SelectedEnvID = env.ID
+		version = v.N
+		created = made
+		return nil
+	})
+	return version, created, err
 }
 
 // Use writes the latest snapshot of the named env to .env and selects it.

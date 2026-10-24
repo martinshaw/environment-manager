@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+## 1.0.0 - 2026-10-24
+
+- `envm upgrade` installs the latest GitHub release over the current binary after checking `checksums.txt`. `envm upgrade --check` reports whether a newer release exists.
+- First-run setup stores each project's existing `.env` as `Local Development` instead of asking for a name.
+- The recovery key is copied to the clipboard and shown on one line.
+- Pending findings advance as soon as they are handled, and `c` adds `.env` to `.gitignore`.
+- `use`, `update`, `new`, `revert`, `diff`, and the TUI project list follow the directory `pwd` prints.
+- A monorepo directory with its own `.env`, such as `packagevault/packages/web`, is its own project. Dependency directories are skipped.
+- Commenting a line no longer stores a version immediately. `u` updates the open env file, `a` saves a new env file, and `R` discards the comment changes.
+- `s` selects the focused env file. On a version, `s` stores that snapshot as the next version and selects it.
+- Each version is shown with the local date and time it was stored, next to its number.
+
 ## 0.1.0 - 2026-10-23
 
 Initial release of envm, a multi-platform tool for versioned `.env` files.

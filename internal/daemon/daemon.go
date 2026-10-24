@@ -303,7 +303,7 @@ func NextEvents(ctx context.Context, dir string) []pending.Event {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(time.Second):
+		case <-time.After(200 * time.Millisecond):
 		}
 		ev, _ := pending.Load(dir)
 		return ev

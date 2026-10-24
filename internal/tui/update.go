@@ -1,14 +1,17 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"martinshaw.co/environment-manager/internal/dotenv"
 	"martinshaw.co/environment-manager/internal/pending"
 	"martinshaw.co/environment-manager/internal/store"
+	"martinshaw.co/environment-manager/internal/watch"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -20,7 +23,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
-		m.layoutEditor()
+		if m.mode == modeEdit {
+			m.layoutEditScreen()
+		} else {
+			m.layoutEditor()
+		}
 		return m, nil
 	case pendingMsg:
 		m.applyPending(msg.events)
@@ -65,6 +72,22 @@ func (m *Model) layoutEditor() {
 	m.editor.SetHeight(h)
 	m.viewport.Width = w
 	m.viewport.Height = h
+}
+
+func (m *Model) layoutEditScreen() {
+	// One row is the action line. Leave a column free: the cursor line in
+	// the textarea is one cell wider than the width it was given, and that
+	// extra cell wraps in the terminal and scrolls the action line off.
+	w := m.width - 1
+	h := m.height - 1
+	if w < 20 {
+		w = 20
+	}
+	if h < 5 {
+		h = 5
+	}
+	m.editor.SetWidth(w)
+	m.editor.SetHeight(h)
 }
 
 func (m Model) updatePass(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -119,7 +142,8 @@ func (m Model) submitPass() (tea.Model, tea.Cmd) {
 			m.preparePrompt()
 			return m, m.input.Focus()
 		}
-		m.recoveryKey = recovery
+		m.recoveryKey = strings.TrimSpace(recovery)
+		m.recoveryCopied = clipboard.WriteAll(m.recoveryKey) == nil
 		m.mode = modeShowRecovery
 		m.errMsg = ""
 		return m, nil
@@ -132,8 +156,13 @@ func (m Model) submitPass() (tea.Model, tea.Cmd) {
 		}
 		m.input.SetValue("")
 		if err != nil {
-			m.errMsg = err.Error()
-			return m, nil
+			if m.useRecovery {
+				m.errMsg = "That recovery key does not open the vault."
+			} else {
+				m.errMsg = fmt.Sprintf("That passphrase does not open the vault (%d characters). Press ctrl+r to enter the recovery key.", len(value))
+			}
+			m.preparePrompt()
+			return m, m.input.Focus()
 		}
 		return m.finishUnlock()
 	}
@@ -148,9 +177,8 @@ func (m Model) finishUnlock() (tea.Model, tea.Cmd) {
 		m.projectCur = indexOf(m.projectRows(), id)
 		m.syncFromCursors()
 	}
-	events, _ := pending.Load(m.dir)
-	m.events = events
 	m.errMsg = ""
+	m.setup = !m.data.Config.SetupDone
 	if len(m.data.Config.Roots) == 0 {
 		m.mode = modeAddRoot
 		m.wizard = true
@@ -158,7 +186,13 @@ func (m Model) finishUnlock() (tea.Model, tea.Cmd) {
 		m.preparePrompt()
 		return m, tea.Batch(m.input.Focus(), m.listenPending())
 	}
-	if len(events) > 0 {
+	if m.setup {
+		m.finishSetup()
+	} else {
+		m.events, _ = pending.Load(m.dir)
+		m.events = watch.OmitGitignoreWithoutEnv(m.events)
+	}
+	if len(m.events) > 0 {
 		m.mode = modeDrift
 		m.eventIdx = 0
 		return m, m.listenPending()
@@ -170,9 +204,13 @@ func (m Model) finishUnlock() (tea.Model, tea.Cmd) {
 func (m Model) updateRecovery(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && (keyMsg.String() == "enter" || keyMsg.String() == "esc") {
 		m.recoveryKey = ""
+		if err := m.reload(); err != nil {
+			m.errMsg = err.Error()
+		}
 		if len(m.data.Config.Roots) == 0 {
 			m.mode = modeAddRoot
 			m.wizard = true
+			m.setup = m.setup || !m.data.Config.SetupDone
 			m.preparePrompt()
 			return m, tea.Batch(m.input.Focus(), m.listenPending())
 		}
@@ -209,12 +247,16 @@ func (m Model) submitText() (tea.Model, tea.Cmd) {
 		if value == "" {
 			m.wizard = false
 			m.input.SetValue("")
+			if m.setup {
+				m.finishSetup()
+			}
 			if len(m.events) > 0 {
 				m.mode = modeDrift
+				m.eventIdx = 0
 			} else {
 				m.mode = modeBrowse
 			}
-			return m, nil
+			return m, m.listenPending()
 		}
 		if err := m.store.AddRoot(value); err != nil {
 			m.errMsg = err.Error()
@@ -277,11 +319,15 @@ func (m Model) submitText() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case modeNewEnv:
-		m.newFromDisk(value)
-		m.input.SetValue("")
+		if m.draft != nil {
+			m.newFromDraft(value)
+		} else {
+			m.newFromDisk(value)
+		}
 		if m.errMsg != "" {
 			return m, nil
 		}
+		m.input.SetValue("")
 		if m.returnMode == modeDrift && len(m.events) > 0 {
 			m.mode = modeDrift
 		} else {
@@ -442,12 +488,14 @@ func (m Model) updateDrift(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.eventIdx = (m.eventIdx - 1 + len(m.events)) % len(m.events)
 			return m, nil
 		case "x":
+			m.errMsg = ""
 			m.dismissEvent()
 			return m, nil
 		case "u":
-			if ev.Kind != pending.KindDrift {
+			if ev.Kind != pending.KindDrift || m.driftUnsaved(ev) {
 				return m, nil
 			}
+			m.errMsg = ""
 			m.focusProject(ev.ProjectID)
 			m.updateFromDisk()
 			if m.errMsg == "" && len(m.events) == 0 {
@@ -458,15 +506,22 @@ func (m Model) updateDrift(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ev.Kind != pending.KindDrift {
 				return m, nil
 			}
+			m.errMsg = ""
 			m.focusProject(ev.ProjectID)
 			m.returnMode = modeDrift
 			m.mode = modeNewEnv
 			m.preparePrompt()
+			m.input.SetValue("")
+			if m.setup {
+				m.input.SetValue(store.DefaultEnvName)
+				m.input.CursorEnd()
+			}
 			return m, m.input.Focus()
 		case "R":
-			if ev.Kind != pending.KindDrift {
+			if ev.Kind != pending.KindDrift || m.driftUnsaved(ev) {
 				return m, nil
 			}
+			m.errMsg = ""
 			m.focusProject(ev.ProjectID)
 			m.revertDisk()
 			if m.errMsg == "" && len(m.events) == 0 {
@@ -475,12 +530,20 @@ func (m Model) updateDrift(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "c":
 			if ev.Kind == pending.KindGitignore {
-				m.copyIgnoreRule()
+				m.addGitignore(ev)
 			}
 			return m, nil
 		}
 	}
 	return m, nil
+}
+
+func (m Model) driftUnsaved(ev pending.Event) bool {
+	if ev.Kind != pending.KindDrift {
+		return false
+	}
+	p := m.data.Project(ev.ProjectID)
+	return p == nil || p.Selected() == nil
 }
 
 func (m *Model) focusProject(id string) {
@@ -631,6 +694,10 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nextHit(-1)
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Filter):
+		if m.draft != nil && m.focus != focusMain {
+			m.errMsg = draftHint
+			return m, nil
+		}
 		if m.focus == focusMain {
 			m.mode = modeSearch
 			m.input.SetValue(m.searchQ)
@@ -650,6 +717,10 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.moveSetting(1)
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Pending):
+		if m.draft != nil {
+			m.errMsg = draftHint
+			return m, nil
+		}
 		if len(m.events) == 0 {
 			m.status = "No pending changes."
 			return m, nil
@@ -662,9 +733,9 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = "Select a version first."
 			return m, nil
 		}
-		m.editor.SetValue(string(m.content))
-		m.layoutEditor()
+		m.editor.SetValue(string(m.shown()))
 		m.mode = modeEdit
+		m.layoutEditScreen()
 		return m, m.editor.Focus()
 	case key.Matches(keyMsg, m.keys.Comment):
 		m.toggleComment()
@@ -676,7 +747,7 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openDiff(false)
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Lint):
-		m.lintIssues = dotenv.Lint(string(m.content))
+		m.lintIssues = dotenv.Lint(string(m.shown()))
 		m.mode = modeLint
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Copy):
@@ -687,9 +758,17 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeCopy
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Delete):
+		if m.draft != nil {
+			m.errMsg = draftHint
+			return m, nil
+		}
 		m.armDelete()
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Rename):
+		if m.draft != nil {
+			m.errMsg = draftHint
+			return m, nil
+		}
 		if m.focus == focusVersions || m.focus == focusMain {
 			m.errMsg = "Versions keep their numbers. Rename a project or env file."
 			return m, nil
@@ -704,6 +783,10 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.input.Focus()
 	case key.Matches(keyMsg, m.keys.Path):
+		if m.draft != nil {
+			m.errMsg = draftHint
+			return m, nil
+		}
 		p := m.currentProject()
 		if p == nil {
 			m.errMsg = "Select a project first."
@@ -714,7 +797,18 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.preparePrompt()
 		m.input.SetValue(p.Path)
 		return m, m.input.Focus()
+	case key.Matches(keyMsg, m.keys.Select):
+		if m.draft != nil {
+			m.errMsg = draftHint
+			return m, nil
+		}
+		m.selectFocused()
+		return m, nil
 	case key.Matches(keyMsg, m.keys.Update):
+		if m.draft != nil {
+			m.saveContent(m.draft)
+			return m, nil
+		}
 		m.updateFromDisk()
 		return m, nil
 	case key.Matches(keyMsg, m.keys.New):
@@ -724,12 +818,27 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.returnMode = modeBrowse
 		m.mode = modeNewEnv
+		m.errMsg = ""
 		m.preparePrompt()
+		m.input.SetValue("")
+		if m.setup && m.draft == nil {
+			m.input.SetValue(store.DefaultEnvName)
+			m.input.CursorEnd()
+		}
 		return m, m.input.Focus()
 	case key.Matches(keyMsg, m.keys.Revert):
+		if m.draft != nil {
+			m.draft = nil
+			m.status = "Reverted comment changes."
+			return m, nil
+		}
 		m.revertDisk()
 		return m, nil
 	case key.Matches(keyMsg, m.keys.Hide):
+		if m.draft != nil {
+			m.errMsg = draftHint
+			return m, nil
+		}
 		p := m.currentProject()
 		if p == nil || m.focus != focusProjects {
 			return m, nil
@@ -763,6 +872,10 @@ func (m *Model) cycle(back bool) {
 }
 
 func (m *Model) move(delta int) {
+	if m.draft != nil && m.focus != focusMain {
+		m.errMsg = draftHint
+		return
+	}
 	switch m.focus {
 	case focusProjects:
 		m.projectCur += delta
