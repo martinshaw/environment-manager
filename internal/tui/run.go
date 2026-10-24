@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"martinshaw.co/environment-manager/internal/daemon"
@@ -24,7 +23,7 @@ func Run(opts Options) error {
 	cwd := opts.CWD
 	if cwd == "" {
 		var err error
-		cwd, err = os.Getwd()
+		cwd, err = store.TerminalDir()
 		if err != nil {
 			return err
 		}

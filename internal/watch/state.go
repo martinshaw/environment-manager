@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/gofrs/flock"
+	"martinshaw.co/environment-manager/internal/pending"
 )
 
 type projectState struct {
@@ -52,6 +53,56 @@ func loadState(dir string) (stateFile, error) {
 		st.Projects = map[string]projectState{}
 	}
 	return st, nil
+}
+
+// SuppressDrift records hashes that were just stored and drops those drift
+// findings so a check that observed the old metadata cannot bring them back.
+func SuppressDrift(dir string, hashes map[string]string) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+	return withLock(dir, func() error {
+		st, err := loadState(dir)
+		if err != nil {
+			return err
+		}
+		events, err := pending.Load(dir)
+		if err != nil {
+			return err
+		}
+		for id, hash := range hashes {
+			ps := st.Projects[id]
+			ps.NotifiedDriftHash = hash
+			st.Projects[id] = ps
+			events = pending.RemoveKind(events, id, pending.KindDrift)
+		}
+		if err := saveState(dir, st); err != nil {
+			return err
+		}
+		return pending.Save(dir, events)
+	})
+}
+
+// SuppressIgnore records the gitignore state just handled and drops that finding.
+func SuppressIgnore(dir, projectID, statusKey string) error {
+	return withLock(dir, func() error {
+		st, err := loadState(dir)
+		if err != nil {
+			return err
+		}
+		events, err := pending.Load(dir)
+		if err != nil {
+			return err
+		}
+		ps := st.Projects[projectID]
+		ps.NotifiedIgnore = statusKey
+		st.Projects[projectID] = ps
+		events = pending.RemoveKind(events, projectID, pending.KindGitignore)
+		if err := saveState(dir, st); err != nil {
+			return err
+		}
+		return pending.Save(dir, events)
+	})
 }
 
 func saveState(dir string, st stateFile) error {

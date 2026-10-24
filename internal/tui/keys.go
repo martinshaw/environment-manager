@@ -18,6 +18,7 @@ type keyMap struct {
 	Rename   key.Binding
 	Path     key.Binding
 	Update   key.Binding
+	Select   key.Binding
 	New      key.Binding
 	Revert   key.Binding
 	Hide     key.Binding
@@ -44,6 +45,7 @@ func newKeys() keyMap {
 		Rename:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rename")),
 		Path:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "edit path")),
 		Update:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update")),
+		Select:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "select")),
 		New:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "new env")),
 		Revert:   key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "revert")),
 		Hide:     key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "hide")),
@@ -55,7 +57,7 @@ func newKeys() keyMap {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Filter, k.Edit, k.Update, k.Help, k.Quit}
+	return []key.Binding{k.Tab, k.Filter, k.Select, k.Edit, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
@@ -63,6 +65,6 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Tab, k.Filter, k.Search},
 		{k.Edit, k.Comment, k.Delete, k.Rename, k.Path, k.Hide},
 		{k.Diff, k.DiffDisk, k.Lint, k.Copy},
-		{k.Update, k.New, k.Revert, k.Pending, k.Settings, k.Help, k.Quit},
+		{k.Update, k.Select, k.New, k.Revert, k.Pending, k.Settings, k.Help, k.Quit},
 	}
 }

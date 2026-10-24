@@ -120,13 +120,33 @@ func mergeScan(d *Data) error {
 			seen[cp] = true
 			if idx := indexByPath(d.Projects, cp); idx >= 0 {
 				d.Projects[idx].Missing = false
-				continue
+			} else {
+				d.Projects = append(d.Projects, Project{
+					ID:   uuid.NewString(),
+					Name: name,
+					Path: cp,
+				})
 			}
-			d.Projects = append(d.Projects, Project{
-				ID:   uuid.NewString(),
-				Name: name,
-				Path: cp,
-			})
+			for _, envDir := range nestedEnvDirs(cp) {
+				nested, err := Canonical(envDir)
+				if err != nil || nested == cp {
+					continue
+				}
+				seen[nested] = true
+				if idx := indexByPath(d.Projects, nested); idx >= 0 {
+					d.Projects[idx].Missing = false
+					continue
+				}
+				rel, err := filepath.Rel(rootPath, nested)
+				if err != nil || rel == "." {
+					rel = filepath.Base(nested)
+				}
+				d.Projects = append(d.Projects, Project{
+					ID:   uuid.NewString(),
+					Name: rel,
+					Path: nested,
+				})
+			}
 		}
 	}
 	for i := range d.Projects {
@@ -143,6 +163,49 @@ func mergeScan(d *Data) error {
 	return nil
 }
 
+const envSearchDepth = 5
+
+func nestedEnvDirs(projectPath string) []string {
+	var found []string
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			if entry.IsDir() {
+				if depth >= envSearchDepth || skipNestedDir(name) {
+					continue
+				}
+				walk(filepath.Join(dir, name), depth+1)
+				continue
+			}
+			if name == ".env" && entry.Type().IsRegular() {
+				found = append(found, dir)
+			}
+		}
+	}
+	walk(projectPath, 0)
+	return found
+}
+
+func skipNestedDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "node_modules", "vendor", "dist", "build", "out", "coverage", "target", "Pods", "bower_components", "venv", "__pycache__":
+		return true
+	default:
+		return false
+	}
+}
+
 func indexByPath(projects []Project, path string) int {
 	for i := range projects {
 		if projects[i].Path == path {
@@ -152,7 +215,23 @@ func indexByPath(projects []Project, path string) int {
 	return -1
 }
 
-// Resolve returns the project whose path is cwd or the nearest ancestor.
+// TerminalDir is the directory the terminal is in, which is what `pwd` prints.
+// A PWD value that points at a different directory is ignored.
+func TerminalDir() (string, error) {
+	dot, err := os.Stat(".")
+	if err != nil {
+		return os.Getwd()
+	}
+	if pwd := os.Getenv("PWD"); pwd != "" && filepath.IsAbs(pwd) {
+		info, statErr := os.Stat(pwd)
+		if statErr == nil && os.SameFile(dot, info) {
+			return filepath.Clean(pwd), nil
+		}
+	}
+	return os.Getwd()
+}
+
+// Resolve returns the project whose path is the terminal directory or the nearest ancestor.
 // Configured roots themselves are not projects unless they were saved as one.
 func Resolve(projects []Project, cwd string) (string, error) {
 	got, err := Canonical(cwd)

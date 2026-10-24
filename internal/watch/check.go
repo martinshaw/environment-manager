@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"os"
 
 	"martinshaw.co/environment-manager/internal/ignore"
 	"martinshaw.co/environment-manager/internal/pending"
@@ -30,13 +31,13 @@ func Check(dir string, hooks Hooks) error {
 	if err := s.Scan(); err != nil {
 		return err
 	}
-	data, err := s.View()
-	if err != nil {
-		return err
-	}
 	var notes []note
 	var events []pending.Event
 	err = withLock(dir, func() error {
+		data, err := store.ReadData(dir)
+		if err != nil {
+			return err
+		}
 		st, err := loadState(dir)
 		if err != nil {
 			return err
@@ -78,26 +79,31 @@ func Check(dir string, hooks Hooks) error {
 				})
 				notes = append(notes, note{title: "envm", body: msg})
 			}
-			ig, err := ignore.Check(p.Path)
-			if err != nil {
-				st.Projects[p.ID] = ps
-				continue
-			}
-			notifyIgnore, clearIgnore := DecideIgnore(ig.Key(), ps.NotifiedIgnore, ig.NeedsAttention())
-			if clearIgnore {
+			if !envOnDisk(p.Path) {
 				ps.NotifiedIgnore = ""
 				events = pending.RemoveKind(events, p.ID, pending.KindGitignore)
-			} else if notifyIgnore {
-				ps.NotifiedIgnore = ig.Key()
-				msg := ig.Message(p.Name)
-				events = pending.Upsert(events, pending.Event{
-					Kind:      pending.KindGitignore,
-					ProjectID: p.ID,
-					Project:   p.Name,
-					Path:      p.Path,
-					Message:   msg,
-				})
-				notes = append(notes, note{title: "envm", body: msg})
+			} else {
+				ig, err := ignore.Check(p.Path)
+				if err != nil {
+					st.Projects[p.ID] = ps
+					continue
+				}
+				notifyIgnore, clearIgnore := DecideIgnore(ig.Key(), ps.NotifiedIgnore, ig.NeedsAttention())
+				if clearIgnore {
+					ps.NotifiedIgnore = ""
+					events = pending.RemoveKind(events, p.ID, pending.KindGitignore)
+				} else if notifyIgnore {
+					ps.NotifiedIgnore = ig.Key()
+					msg := ig.Message(p.Name)
+					events = pending.Upsert(events, pending.Event{
+						Kind:      pending.KindGitignore,
+						ProjectID: p.ID,
+						Project:   p.Name,
+						Path:      p.Path,
+						Message:   msg,
+					})
+					notes = append(notes, note{title: "envm", body: msg})
+				}
 			}
 			st.Projects[p.ID] = ps
 		}
@@ -125,6 +131,24 @@ func Check(dir string, hooks Hooks) error {
 		hooks.Updated(events)
 	}
 	return nil
+}
+
+// envOnDisk reports whether the project directory contains a .env file.
+func envOnDisk(projectPath string) bool {
+	info, err := os.Stat(store.EnvPath(projectPath))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// OmitGitignoreWithoutEnv drops gitignore findings for projects that have no .env file.
+func OmitGitignoreWithoutEnv(events []pending.Event) []pending.Event {
+	out := make([]pending.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.Kind == pending.KindGitignore && !envOnDisk(ev.Path) {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 func driftMessage(project string, unsaved bool) string {

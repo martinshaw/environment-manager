@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -25,6 +26,7 @@ func (m *Model) saveContent(content []byte) {
 		m.errMsg = err.Error()
 		return
 	}
+	m.draft = nil
 	m.versionN = n
 	if err := m.reload(); err != nil {
 		m.errMsg = err.Error()
@@ -40,21 +42,129 @@ func (m *Model) saveContent(content []byte) {
 	}
 }
 
+const draftHint = "Comment changes are not saved. u update, a save as new, or R revert."
+
 func (m *Model) toggleComment() {
 	if m.currentVersion() == nil {
 		m.errMsg = "Select a version first."
 		return
 	}
-	next, err := dotenv.ToggleComment(string(m.content), m.lineCur)
+	next, err := dotenv.ToggleComment(string(m.shown()), m.lineCur)
 	if err != nil {
 		m.errMsg = err.Error()
 		return
 	}
-	if next == string(m.content) {
+	if next == string(m.shown()) {
 		m.status = "No change."
 		return
 	}
-	m.saveContent([]byte(next))
+	if next == string(m.content) {
+		m.draft = nil
+		m.status = "Reverted comment changes."
+		return
+	}
+	m.draft = []byte(next)
+	m.status = draftHint
+}
+
+func (m *Model) newFromDraft(name string) {
+	m.errMsg = ""
+	p := m.currentProject()
+	if p == nil {
+		m.errMsg = "Select a project first."
+		return
+	}
+	if m.draft == nil {
+		m.errMsg = "No comment changes to store."
+		return
+	}
+	n, err := m.store.NewFromContent(p.ID, name, m.draft)
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.draft = nil
+	m.versionN = n
+	if data, err := m.store.View(); err == nil {
+		if proj := data.Project(p.ID); proj != nil {
+			m.envID = proj.SelectedEnvID
+		}
+	}
+	_ = m.reload()
+	m.status = fmt.Sprintf("Stored %s v%d and selected it.", name, n)
+	m.clearProjectDrift(p.ID)
+}
+
+func (m *Model) selectFocused() {
+	switch m.focus {
+	case focusEnvs:
+		m.selectEnvFile()
+	case focusVersions, focusMain:
+		m.selectOpenVersion()
+	default:
+		m.status = "Focus an env file or a version, then press s."
+	}
+}
+
+func (m *Model) selectEnvFile() {
+	p := m.currentProject()
+	env := m.currentEnv()
+	if p == nil || env == nil {
+		m.errMsg = "Select an env file first."
+		return
+	}
+	if m.diskHash == "" {
+		m.refreshDisk()
+	}
+	if lat := env.Latest(); lat != nil && p.SelectedEnvID == env.ID && m.diskHash == lat.SHA256 {
+		m.versionN = lat.N
+		m.status = fmt.Sprintf("%s v%d is already selected.", env.Name, lat.N)
+		return
+	}
+	n, err := m.store.Use(p.ID, env.Name)
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.envID = env.ID
+	m.versionN = n
+	_ = m.reload()
+	m.status = fmt.Sprintf("Selected %s v%d.", env.Name, n)
+	m.clearProjectDrift(p.ID)
+}
+
+func (m *Model) selectOpenVersion() {
+	p := m.currentProject()
+	env := m.currentEnv()
+	ver := m.currentVersion()
+	if p == nil || env == nil || ver == nil {
+		m.errMsg = "Select a version first."
+		return
+	}
+	if m.diskHash == "" {
+		m.refreshDisk()
+	}
+	lat := env.Latest()
+	if lat != nil && ver.N == lat.N && p.SelectedEnvID == env.ID && m.diskHash == lat.SHA256 {
+		m.status = fmt.Sprintf("%s v%d is already selected.", env.Name, ver.N)
+		return
+	}
+	from := ver.N
+	n, created, err := m.store.RestoreVersion(p.ID, env.ID, from)
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.envID = env.ID
+	m.versionN = n
+	_ = m.reload()
+	if created {
+		m.status = fmt.Sprintf("Selected %s v%d, stored from v%d.", env.Name, n, from)
+		m.clearProjectDrift(p.ID)
+		return
+	}
+	m.status = fmt.Sprintf("Selected %s v%d.", env.Name, n)
+	m.clearProjectDrift(p.ID)
 }
 
 func (m *Model) updateFromDisk() {
@@ -63,28 +173,52 @@ func (m *Model) updateFromDisk() {
 		m.errMsg = "Select a project first."
 		return
 	}
+	sel := p.Selected()
+	if sel == nil {
+		m.errMsg = "No selected env file. Press a to store .env as a new file."
+		return
+	}
+	if m.diskHash == "" {
+		m.refreshDisk()
+	}
+	lat := sel.Latest()
+	if lat != nil && m.diskHash == lat.SHA256 {
+		m.status = sel.Name + " already matches .env."
+		return
+	}
+	if m.diskHash == "" || m.diskHash == store.MissingHash {
+		m.errMsg = "No .env file in the project directory."
+		return
+	}
 	name, n, created, err := m.store.UpdateFromDisk(p.ID)
 	if err != nil {
 		m.errMsg = err.Error()
 		return
 	}
-	m.versionN = n
-	_ = m.reload()
 	if !created {
 		m.status = fmt.Sprintf("%s v%d already matches .env.", name, n)
 		return
 	}
+	m.envID = sel.ID
+	m.versionN = n
+	_ = m.reload()
 	m.status = fmt.Sprintf("Stored %s v%d.", name, n)
 	m.clearProjectDrift(p.ID)
 }
 
 func (m *Model) newFromDisk(name string) {
+	m.errMsg = ""
 	p := m.currentProject()
 	if p == nil {
 		m.errMsg = "Select a project first."
 		return
 	}
 	n, err := m.store.NewFromDisk(p.ID, name)
+	if errors.Is(err, store.ErrDuplicate) && m.returnMode == modeDrift {
+		m.status = name + " is already stored."
+		m.clearProjectDrift(p.ID)
+		return
+	}
 	if err != nil {
 		m.errMsg = err.Error()
 		return
@@ -230,7 +364,7 @@ func (m *Model) openDiff(previous bool) {
 }
 
 func (m *Model) copy(kind string) {
-	content := string(m.content)
+	content := string(m.shown())
 	var text string
 	switch kind {
 	case "markdown":
@@ -273,12 +407,79 @@ func (m *Model) copy(kind string) {
 	m.mode = modeBrowse
 }
 
-func (m *Model) copyIgnoreRule() {
-	if err := clipboard.WriteAll(ignore.IgnoreRule()); err != nil {
-		m.errMsg = "clipboard: " + err.Error()
+func (m *Model) addGitignore(ev pending.Event) {
+	m.errMsg = ""
+	if err := ignore.AddEnvIgnore(ev.Path); err != nil {
+		m.errMsg = err.Error()
 		return
 	}
-	m.status = "Copied the .env ignore rule."
+	st, err := ignore.Check(ev.Path)
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	if err := watch.SuppressIgnore(m.dir, ev.ProjectID, st.Key()); err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.dropKind(ev.ProjectID, pending.KindGitignore)
+	if st.Code == "tracked" {
+		m.status = ev.Project + ": added .env to .gitignore. Git still tracks .env, so the rule applies after it is untracked."
+		return
+	}
+	m.status = "Added .env to .gitignore."
+}
+
+func (m *Model) dropKind(projectID, kind string) {
+	var keep []pending.Event
+	for _, ev := range m.events {
+		if ev.ProjectID == projectID && ev.Kind == kind {
+			continue
+		}
+		keep = append(keep, ev)
+	}
+	m.events = keep
+	if len(m.events) == 0 {
+		if m.mode == modeDrift {
+			m.mode = modeBrowse
+		}
+		return
+	}
+	m.eventIdx = clamp(m.eventIdx, len(m.events))
+}
+
+func (m *Model) finishSetup() {
+	if !m.setup {
+		return
+	}
+	n, err := m.store.ImportUnsaved(store.DefaultEnvName)
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	if n > 0 {
+		m.status = fmt.Sprintf("Stored .env as %s for %d projects.", store.DefaultEnvName, n)
+	}
+	if err := m.store.SetSetupDone(); err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.setup = false
+	if err := m.reload(); err != nil && m.errMsg == "" {
+		m.errMsg = err.Error()
+	}
+	hashes := map[string]string{}
+	for _, p := range m.data.Projects {
+		env := p.Selected()
+		if env == nil || env.Latest() == nil {
+			continue
+		}
+		hashes[p.ID] = env.Latest().SHA256
+	}
+	_ = watch.SuppressDrift(m.dir, hashes)
+	events, _ := pending.Load(m.dir)
+	m.events = watch.OmitGitignoreWithoutEnv(events)
+	m.eventIdx = 0
 }
 
 func (m *Model) dismissEvent() {
@@ -305,7 +506,23 @@ func (m *Model) dismissEvent() {
 }
 
 func (m *Model) applyPending(events []pending.Event) {
+	events = watch.OmitGitignoreWithoutEnv(events)
+	idx := m.eventIdx
+	var id string
+	if len(m.events) > 0 {
+		idx = clamp(idx, len(m.events))
+		id = m.events[idx].ID
+	}
 	m.events = events
+	m.eventIdx = clamp(idx, len(events))
+	if id != "" {
+		for i, ev := range events {
+			if ev.ID == id {
+				m.eventIdx = i
+				break
+			}
+		}
+	}
 	if len(events) == 0 {
 		if m.mode == modeDrift {
 			m.mode = modeBrowse

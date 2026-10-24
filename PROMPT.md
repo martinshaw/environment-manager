@@ -6,7 +6,7 @@ Use bubbletea for the TUI.
 
 Projects are the child directories of one or more root directories which can be configured (I might select `['/Users/martin/Herd', '/User/martin/Developer'] for managing my Laravel apps and other non-Laravel projects). Projects should initially be named after the name of the project directory. The path and name of the project should be editable.
 
-The user should be able to store different .env files for each of the projects (for example "Tom's AdviserHub", "Staging AdviserHub", "Production AHub" etc... might be names of .env files for the project "AdviserHub".
+The user should be able to store different .env files for each of the projects (for example "Bob's Todo App", "Staging Todo App", "Production App" etc... might be names of .env files for the project "Todo App".
 
 The tool should remember which stored .env file is currently 'selected' (meaning it is the current contents of actual .env file in the project directory). I should be able to switch to different .env files using a command which is aware of the current working directory as the project directory.
 
