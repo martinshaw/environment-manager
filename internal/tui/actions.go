@@ -3,9 +3,12 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 
 	"github.com/atotto/clipboard"
+	tea "github.com/charmbracelet/bubbletea"
 	"martinshaw.co/environment-manager/internal/dotenv"
 	"martinshaw.co/environment-manager/internal/ignore"
 	"martinshaw.co/environment-manager/internal/pending"
@@ -43,6 +46,117 @@ func (m *Model) saveContent(content []byte) {
 }
 
 const draftHint = "Comment changes are not saved. u update, a save as new, or R revert."
+
+type vimDoneMsg struct {
+	err error
+}
+
+func (m *Model) openVim() tea.Cmd {
+	if m.draft != nil {
+		m.errMsg = draftHint
+		return nil
+	}
+	p := m.currentProject()
+	if p == nil {
+		m.errMsg = "Select a project first."
+		return nil
+	}
+	if _, err := exec.LookPath("vim"); err != nil {
+		m.errMsg = "vim was not found on PATH."
+		return nil
+	}
+	m.refreshDisk()
+	m.vimBefore = m.diskHash
+	m.vimProject = p.ID
+	if err := watch.PauseDrift(m.dir, p.ID); err != nil {
+		m.vimProject = ""
+		m.errMsg = err.Error()
+		return nil
+	}
+	path := store.EnvPath(p.Path)
+	return tea.ExecProcess(exec.Command("vim", path), func(err error) tea.Msg {
+		return vimDoneMsg{err: err}
+	})
+}
+
+func (m *Model) afterVim(err error) {
+	if err != nil {
+		m.errMsg = "vim: " + err.Error()
+		m.endVim()
+		return
+	}
+	m.refreshDisk()
+	if m.diskHash == m.vimBefore {
+		m.endVim()
+		m.status = "No change."
+		return
+	}
+	m.errMsg = ""
+	m.mode = modeVimChoice
+}
+
+func (m *Model) endVim() {
+	if m.vimProject != "" {
+		_ = watch.ResumeDrift(m.dir, m.vimProject)
+	}
+	m.vimProject = ""
+	m.vimBefore = ""
+}
+
+func (m *Model) vimUpdate() {
+	p := m.currentProject()
+	if p == nil {
+		m.errMsg = "Select a project first."
+		return
+	}
+	sel := p.Selected()
+	if sel == nil {
+		m.errMsg = "No selected env file. Press a to store .env as a new file."
+		return
+	}
+	content, err := os.ReadFile(store.EnvPath(p.Path))
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	n, created, err := m.store.SaveContent(p.ID, sel.ID, content, false)
+	if err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.envID = sel.ID
+	m.versionN = n
+	m.mode = modeBrowse
+	m.endVim()
+	if err := m.reload(); err != nil {
+		m.errMsg = err.Error()
+		return
+	}
+	m.clearProjectDrift(p.ID)
+	if !created {
+		m.status = fmt.Sprintf("%s v%d already matches .env.", sel.Name, n)
+		return
+	}
+	m.status = fmt.Sprintf("Stored %s v%d.", sel.Name, n)
+}
+
+func (m *Model) vimRevert() {
+	p := m.currentProject()
+	if p == nil {
+		m.errMsg = "Select a project first."
+		return
+	}
+	if p.Selected() == nil {
+		m.errMsg = "No selected env file to restore."
+		return
+	}
+	m.revertDisk()
+	if m.errMsg != "" {
+		return
+	}
+	m.mode = modeBrowse
+	m.endVim()
+}
 
 func (m *Model) toggleComment() {
 	if m.currentVersion() == nil {
@@ -232,6 +346,7 @@ func (m *Model) newFromDisk(name string) {
 	_ = m.reload()
 	m.status = fmt.Sprintf("Stored %s v%d and selected it.", name, n)
 	m.clearProjectDrift(p.ID)
+	m.endVim()
 }
 
 func (m *Model) revertDisk() {
@@ -527,6 +642,9 @@ func (m *Model) applyPending(events []pending.Event) {
 		if m.mode == modeDrift {
 			m.mode = modeBrowse
 		}
+		return
+	}
+	if m.vimProject != "" {
 		return
 	}
 	if m.mode != modeBrowse && m.mode != modeFilter && m.mode != modeSearch {

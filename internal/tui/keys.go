@@ -9,6 +9,7 @@ type keyMap struct {
 	Filter   key.Binding
 	Search   key.Binding
 	Edit     key.Binding
+	Vim      key.Binding
 	Comment  key.Binding
 	Diff     key.Binding
 	DiffDisk key.Binding
@@ -36,6 +37,7 @@ func newKeys() keyMap {
 		Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter list")),
 		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search file")),
 		Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Vim:      key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "vim")),
 		Comment:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "comment")),
 		Diff:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff previous")),
 		DiffDisk: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "diff disk")),
@@ -63,7 +65,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Tab, k.Filter, k.Search},
-		{k.Edit, k.Comment, k.Delete, k.Rename, k.Path, k.Hide},
+		{k.Edit, k.Vim, k.Comment, k.Delete, k.Rename, k.Path, k.Hide},
 		{k.Diff, k.DiffDisk, k.Lint, k.Copy},
 		{k.Update, k.Select, k.New, k.Revert, k.Pending, k.Settings, k.Help, k.Quit},
 	}

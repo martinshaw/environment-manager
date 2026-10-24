@@ -37,6 +37,8 @@ func (m Model) View() string {
 		body = m.editBody()
 	case modeDrift:
 		body = m.driftBody()
+	case modeVimChoice:
+		body = m.centered(m.vimChoiceBody())
 	case modeSettings:
 		body = m.settingsBody()
 	default:
@@ -407,6 +409,20 @@ func (m Model) helpBody() string {
 	return titleStyle.Render("Keys") + "\n\n" + h.View(m.keys) + "\n\n" +
 		dimStyle.Render("While a file search is active, n and N move between matches. a stores the current .env as a new named file.") +
 		"\n\n" + dimStyle.Render("esc back")
+}
+
+func (m Model) vimChoiceBody() string {
+	name := "the selected env file"
+	if p := m.currentProject(); p != nil {
+		if env := p.Selected(); env != nil {
+			label := env.Name
+			if lat := env.Latest(); lat != nil {
+				label = fmt.Sprintf("%s v%d", env.Name, lat.N)
+			}
+			name = label
+		}
+	}
+	return titleStyle.Render("Vim") + "\n\n.env changed. Nothing is stored until you choose.\n\nu  update   save as the next version and switch to it\na  new      store as a new env file\nR  revert   restore " + name
 }
 
 func (m Model) driftBody() string {

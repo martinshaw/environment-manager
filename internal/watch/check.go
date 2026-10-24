@@ -63,21 +63,23 @@ func Check(dir string, hooks Hooks) error {
 			if err != nil {
 				disk = store.MissingHash
 			}
-			notifyDrift, clearDrift := DecideDrift(latest, disk, ps.NotifiedDriftHash)
-			if clearDrift {
-				ps.NotifiedDriftHash = ""
-				events = pending.RemoveKind(events, p.ID, pending.KindDrift)
-			} else if notifyDrift {
-				ps.NotifiedDriftHash = disk
-				msg := driftMessage(p.Name, latest == "")
-				events = pending.Upsert(events, pending.Event{
-					Kind:      pending.KindDrift,
-					ProjectID: p.ID,
-					Project:   p.Name,
-					Path:      p.Path,
-					Message:   msg,
-				})
-				notes = append(notes, note{title: "envm", body: msg})
+			if !ps.PauseDrift {
+				notifyDrift, clearDrift := DecideDrift(latest, disk, ps.NotifiedDriftHash)
+				if clearDrift {
+					ps.NotifiedDriftHash = ""
+					events = pending.RemoveKind(events, p.ID, pending.KindDrift)
+				} else if notifyDrift {
+					ps.NotifiedDriftHash = disk
+					msg := driftMessage(p.Name, latest == "")
+					events = pending.Upsert(events, pending.Event{
+						Kind:      pending.KindDrift,
+						ProjectID: p.ID,
+						Project:   p.Name,
+						Path:      p.Path,
+						Message:   msg,
+					})
+					notes = append(notes, note{title: "envm", body: msg})
+				}
 			}
 			if !envOnDisk(p.Path) {
 				ps.NotifiedIgnore = ""

@@ -34,6 +34,8 @@ func Run(opts Options) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	defer func() { _ = watch.ClearDriftPauses(dir) }()
+	_ = watch.ClearDriftPauses(dir)
 	if !daemon.Running(dir) {
 		go func() {
 			_ = watch.Loop(ctx, dir, watch.Hooks{})

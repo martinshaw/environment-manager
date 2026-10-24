@@ -16,6 +16,7 @@ import (
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "ctrl+c" {
+		m.endVim()
 		return m, tea.Quit
 	}
 	switch msg := msg.(type) {
@@ -33,6 +34,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyPending(msg.events)
 		m.refreshDisk()
 		return m, m.listenPending()
+	case vimDoneMsg:
+		m.afterVim(msg.err)
+		return m, nil
 	}
 	switch m.mode {
 	case modeUnlock, modeCreatePass, modeConfirmPass:
@@ -51,6 +55,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDiff(msg)
 	case modeDrift:
 		return m.updateDrift(msg)
+	case modeVimChoice:
+		return m.updateVimChoice(msg)
 	case modeSettings:
 		return m.updateSettings(msg)
 	case modeHelp, modeLint, modeCopy, modeConfirm:
@@ -469,6 +475,35 @@ func (m Model) updateDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateVimChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "u":
+		m.errMsg = ""
+		m.vimUpdate()
+		return m, nil
+	case "a":
+		if m.currentProject() == nil {
+			m.errMsg = "Select a project first."
+			return m, nil
+		}
+		m.errMsg = ""
+		m.returnMode = modeVimChoice
+		m.mode = modeNewEnv
+		m.preparePrompt()
+		m.input.SetValue("")
+		return m, m.input.Focus()
+	case "R":
+		m.errMsg = ""
+		m.vimRevert()
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m Model) updateDrift(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(m.events) == 0 {
 		m.mode = modeBrowse
@@ -728,6 +763,8 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeDrift
 		m.eventIdx = 0
 		return m, nil
+	case key.Matches(keyMsg, m.keys.Vim):
+		return m, m.openVim()
 	case key.Matches(keyMsg, m.keys.Edit):
 		if m.currentVersion() == nil {
 			m.errMsg = "Select a version first."

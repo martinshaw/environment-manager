@@ -221,6 +221,69 @@ func TestCheckDoesNotRestoreStoredEnv(t *testing.T) {
 	}
 }
 
+func TestCheckIgnoresPausedDrift(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateVault("test-passphrase", 12); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project := filepath.Join(root, "Todo App")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(project, ".env")
+	if err := os.WriteFile(envPath, []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := s.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := data.Projects[0].ID
+	if _, err := s.NewFromDisk(id, "Local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := PauseDrift(dir, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, []byte("A=2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Check(dir, Hooks{}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := pending.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countKind(events, pending.KindDrift) != 0 {
+		t.Fatalf("paused drift was stored: %#v", events)
+	}
+	if err := ResumeDrift(dir, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := Check(dir, Hooks{}); err != nil {
+		t.Fatal(err)
+	}
+	events, err = pending.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countKind(events, pending.KindDrift) != 1 {
+		t.Fatalf("drift after resume: %#v", events)
+	}
+}
+
 func countKind(events []pending.Event, kind string) int {
 	n := 0
 	for _, ev := range events {

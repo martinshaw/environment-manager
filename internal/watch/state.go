@@ -12,6 +12,7 @@ import (
 type projectState struct {
 	NotifiedDriftHash string `json:"notifiedDriftHash,omitempty"`
 	NotifiedIgnore    string `json:"notifiedIgnore,omitempty"`
+	PauseDrift        bool   `json:"pauseDrift,omitempty"`
 }
 
 type stateFile struct {
@@ -102,6 +103,61 @@ func SuppressIgnore(dir, projectID, statusKey string) error {
 			return err
 		}
 		return pending.Save(dir, events)
+	})
+}
+
+// PauseDrift stops drift findings for a project while an editor has .env open.
+func PauseDrift(dir, projectID string) error {
+	return withLock(dir, func() error {
+		st, err := loadState(dir)
+		if err != nil {
+			return err
+		}
+		ps := st.Projects[projectID]
+		ps.PauseDrift = true
+		st.Projects[projectID] = ps
+		return saveState(dir, st)
+	})
+}
+
+// ResumeDrift allows drift findings for a project again.
+func ResumeDrift(dir, projectID string) error {
+	return withLock(dir, func() error {
+		st, err := loadState(dir)
+		if err != nil {
+			return err
+		}
+		ps := st.Projects[projectID]
+		if !ps.PauseDrift {
+			return nil
+		}
+		ps.PauseDrift = false
+		st.Projects[projectID] = ps
+		return saveState(dir, st)
+	})
+}
+
+// ClearDriftPauses resumes every paused project. A crashed editor session
+// must not hide drift after envm exits.
+func ClearDriftPauses(dir string) error {
+	return withLock(dir, func() error {
+		st, err := loadState(dir)
+		if err != nil {
+			return err
+		}
+		changed := false
+		for id, ps := range st.Projects {
+			if !ps.PauseDrift {
+				continue
+			}
+			ps.PauseDrift = false
+			st.Projects[id] = ps
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
+		return saveState(dir, st)
 	})
 }
 
