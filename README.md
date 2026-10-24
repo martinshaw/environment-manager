@@ -208,11 +208,11 @@ A flock file serializes writers. Two envm processes can run; they will not inter
 
 ## Gitignore checks
 
-envm looks at `.env` in the project root, not at `.env.example`.
+envm looks at `.env` in the project directory, not at `.env.example`. A project with no `.env` is not asked to add a gitignore rule.
 
-In a git repository it asks git whether that path is ignored, and whether it is already tracked. A tracked `.env` stays in the repository until you untrack it; adding a gitignore rule does not remove it from history. envm will not untrack the file for you.
+In a git repository envm reads the ignore rules and the index itself. It does not run `git`. A tracked `.env` stays in the repository until you untrack it; adding a gitignore rule does not remove it from history. envm will not untrack the file for you.
 
-Outside git, envm reads `.gitignore` in the project root. The last matching pattern wins, including a later `!.env` negation.
+Outside git, envm reads `.gitignore` files in the project directory and up to three parents. The last matching pattern wins, including a later `!.env` negation.
 
 Dismissing the notice leaves it dismissed until the ignore result changes.
 
@@ -223,7 +223,7 @@ go test ./...
 go build -o envm ./cmd/envm
 ```
 
-Tests cover dotenv lint and comment toggling, encrypt and decrypt, version bumps, current-directory project resolution, diffs and markdown fences, gitignore coverage, watcher findings, and a TUI browse pass.
+Tests cover dotenv lint and comment toggling, encrypt and decrypt, version bumps, current-directory project resolution, diffs and markdown fences, gitignore coverage, watcher findings, the pending queue, daemon startup, notifications, the command line, self-upgrade, and a TUI browse pass.
 
 Pushing a tag `vX.Y.Z` runs GoReleaser. The GitHub release body is `CHANGELOG.md`, and the artifacts are the six platform archives plus `checksums.txt`. Update the changelog before tagging.
 
