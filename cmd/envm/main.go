@@ -6,7 +6,7 @@ import (
 	"martinshaw.co/environment-manager/internal/cli"
 )
 
-var version = "1.0.0"
+var version = "1.0.1"
 
 func main() {
 	if err := cli.Execute(version); err != nil {

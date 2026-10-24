@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 - 2026-10-24
+
+- Nested project names use forward slashes on Windows, such as `packagevault/packages/web`.
+
 ## 1.0.0 - 2026-10-24
 
 - `envm upgrade` installs the latest GitHub release over the current binary after checking `checksums.txt`. `envm upgrade --check` reports whether a newer release exists.
