@@ -143,7 +143,7 @@ func mergeScan(d *Data) error {
 				}
 				d.Projects = append(d.Projects, Project{
 					ID:   uuid.NewString(),
-					Name: rel,
+					Name: filepath.ToSlash(rel),
 					Path: nested,
 				})
 			}
