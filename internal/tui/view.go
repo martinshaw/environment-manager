@@ -20,7 +20,7 @@ func (m Model) View() string {
 	var body string
 	switch m.mode {
 	case modeUnlock, modeCreatePass, modeConfirmPass:
-		body = m.centered(m.passBody())
+		body = m.passScreen()
 	case modeAddRoot, modeRename, modePath, modeNewEnv:
 		body = m.centered(m.promptBody())
 	case modeHelp:
