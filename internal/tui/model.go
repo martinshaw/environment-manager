@@ -37,6 +37,7 @@ const (
 	modePath
 	modeNewEnv
 	modeDrift
+	modeVimChoice
 	modeHelp
 	modeSettings
 )
@@ -83,6 +84,8 @@ type Model struct {
 	contentKey     string
 	draft          []byte
 	diskHash       string
+	vimProject     string
+	vimBefore      string
 	input          textinput.Model
 	editor         textarea.Model
 	viewport       viewport.Model

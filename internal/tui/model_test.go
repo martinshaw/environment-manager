@@ -645,6 +645,137 @@ func runeKey(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+func TestVimChoiceAfterExit(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateVault("test-passphrase", 12); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project := filepath.Join(root, "Todo App")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(project, ".env")
+	if err := os.WriteFile(envPath, []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := st.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := data.Projects[0].ID
+	if _, err := st.NewFromDisk(id, "Local"); err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(dir, project, "1.0.1", context.Background(), st)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.mode = modeBrowse
+	if err := m.reload(); err != nil {
+		t.Fatal(err)
+	}
+	m.draft = []byte("A=1\n")
+	blocked := send(m, runeKey("v")).(Model)
+	if blocked.mode != modeBrowse || !strings.Contains(blocked.errMsg, "not saved") {
+		t.Fatalf("vim started during a draft: %s", blocked.errMsg)
+	}
+	m.draft = nil
+	m.refreshDisk()
+	m.vimBefore = m.diskHash
+	m.vimProject = id
+	unchanged := send(m, vimDoneMsg{}).(Model)
+	if unchanged.mode != modeBrowse || unchanged.status != "No change." {
+		t.Fatalf("unchanged vim: mode %d status %q", unchanged.mode, unchanged.status)
+	}
+
+	m.refreshDisk()
+	m.vimBefore = m.diskHash
+	m.vimProject = id
+	if err := os.WriteFile(envPath, []byte("A=2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.events = []pending.Event{{ID: "drift", Kind: pending.KindDrift, ProjectID: id, Project: "Todo App", Message: "changed"}}
+	m.applyPending(m.events)
+	if m.mode == modeDrift {
+		t.Fatal("drift opened while vim was in progress")
+	}
+	got := send(m, vimDoneMsg{}).(Model)
+	if got.mode != modeVimChoice {
+		t.Fatalf("mode %d", got.mode)
+	}
+	if !strings.Contains(got.View(), "u  update") || !strings.Contains(got.View(), "Local v1") {
+		t.Fatalf("choice screen:\n%s", got.View())
+	}
+	got = send(got, runeKey("u")).(Model)
+	if got.mode != modeBrowse {
+		t.Fatalf("update stayed in %d: %s", got.mode, got.errMsg)
+	}
+	if n := versionCount(t, &got, "Local"); n != 2 {
+		t.Fatalf("versions %d", n)
+	}
+	if got.versionN != 2 || got.vimProject != "" {
+		t.Fatalf("version %d vim %q", got.versionN, got.vimProject)
+	}
+	disk, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(disk) != "A=2\n" {
+		t.Fatalf("disk %q", disk)
+	}
+
+	if err := os.WriteFile(envPath, []byte("A=3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got.vimBefore = "previous"
+	got.vimProject = id
+	got = send(got, vimDoneMsg{}).(Model)
+	got = send(got, runeKey("R")).(Model)
+	disk, err = os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(disk) != "A=2\n" || got.mode != modeBrowse {
+		t.Fatalf("revert disk %q mode %d err %s", disk, got.mode, got.errMsg)
+	}
+
+	if err := os.WriteFile(envPath, []byte("A=4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got.vimBefore = "previous"
+	got.vimProject = id
+	got = send(got, vimDoneMsg{}).(Model)
+	got = send(got, runeKey("a")).(Model)
+	for _, r := range "Copy" {
+		got = send(got, runeKey(string(r))).(Model)
+	}
+	got = send(got, tea.KeyMsg{Type: tea.KeyEnter}).(Model)
+	if n := versionCount(t, &got, "Copy"); n != 1 {
+		t.Fatalf("Copy versions %d err %s", n, got.errMsg)
+	}
+	if got.vimProject != "" {
+		t.Fatal("vim pause remained after new")
+	}
+	disk, err = os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(disk) != "A=4\n" {
+		t.Fatalf("disk after new %q", disk)
+	}
+}
+
 func TestEditActionsStayVisible(t *testing.T) {
 	m := newModel(t.TempDir(), t.TempDir(), "0.1.0", context.Background(), nil)
 	m.ready = true

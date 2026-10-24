@@ -15,7 +15,7 @@ func TestMainVersionAndUnknown(t *testing.T) {
 	}
 
 	out := runMain(t, "version")
-	if !strings.Contains(out, version) || version != "1.0.1" {
+	if !strings.Contains(out, version) || version != "1.1.0" {
 		t.Fatalf("version %q output %q", version, out)
 	}
 

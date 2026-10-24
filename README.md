@@ -23,15 +23,15 @@ Release archives are built for Linux, macOS, and Windows, each on `amd64` and `a
 
 ```bash
 # macOS Apple silicon
-curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.0.1/envm_1.0.1_darwin_arm64.tar.gz | tar -xz
+curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.1.0/envm_1.1.0_darwin_arm64.tar.gz | tar -xz
 sudo install envm /usr/local/bin/envm
 
 # Linux x86_64
-curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.0.1/envm_1.0.1_linux_amd64.tar.gz | tar -xz
+curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.1.0/envm_1.1.0_linux_amd64.tar.gz | tar -xz
 sudo install envm /usr/local/bin/envm
 ```
 
-On Windows, download `envm_1.0.1_windows_amd64.zip` or `envm_1.0.1_windows_arm64.zip` and extract `envm.exe`.
+On Windows, download `envm_1.1.0_windows_amd64.zip` or `envm_1.1.0_windows_arm64.zip` and extract `envm.exe`.
 
 Checksums for every archive are in `checksums.txt` on the same release.
 
@@ -52,7 +52,7 @@ The Go module path is `martinshaw.co/environment-manager`. `go install` works af
 ```
 
 ```bash
-go install martinshaw.co/environment-manager/cmd/envm@v1.0.1
+go install martinshaw.co/environment-manager/cmd/envm@v1.1.0
 ```
 
 Until that page exists, install a release binary. Building from this repository also works:
@@ -134,6 +134,7 @@ The sidebar has three lists: projects, env files, and versions. The main pane sh
 | `n` `N` | Next and previous file-search match, while a search is active |
 | `enter` | Move to the next sidebar section |
 | `e` | Edit the open snapshot. `ctrl+s` saves a new version. `esc` cancels |
+| `v` | Open the project's `.env` in vim. After vim exits, choose update, new, or revert |
 | `c` | Comment or uncomment the current line. Changes wait until `u` updates the open env file, `a` saves a new env file, or `R` discards them |
 | `x` | Delete the focused project, env file, or version, after confirmation |
 | `r` | Rename the focused project or env file |
@@ -151,6 +152,8 @@ The sidebar has three lists: projects, env files, and versions. The main pane sh
 | `g` | Roots and hidden projects |
 | `?` | All keys |
 | `q` | Quit. `ctrl+c` quits from any screen |
+
+`v` suspends the TUI and opens `.env` in vim. Writing the file inside vim does not store a version and does not raise a drift finding. When you leave vim, if `.env` changed, envm asks what to do. `u` stores those bytes as the next version of the selected env file and switches to it. `a` stores them as a new env file. `R` writes the selected env file's current version back over `.env`.
 
 Saving an edit creates the next version when the bytes changed. Commenting lines does not. After one or more comment changes, `u` stores them as the next version of the open env file, `a` stores them as a new env file, and `R` discards them. If that env file is the selected one, saving or `u` updates `.env` too so the disk matches the new snapshot. `a` selects the new file and writes it to `.env`.
 

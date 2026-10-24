@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0 - 2026-10-24
+
+- `v` opens the project's `.env` in vim. After vim exits, choose update, new, or revert.
+
 ## 1.0.1 - 2026-10-24
 
 - Nested project names use forward slashes on Windows, such as `packagevault/packages/web`.
