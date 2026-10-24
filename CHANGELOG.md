@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1 - 2026-10-24
+
+- The passphrase screen shows an ornate ENVM logo and a dragon breathing fire behind the prompt.
+
 ## 1.1.0 - 2026-10-24
 
 - `v` opens the project's `.env` in vim. After vim exits, choose update, new, or revert.
