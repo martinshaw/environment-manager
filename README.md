@@ -23,15 +23,15 @@ Release archives are built for Linux, macOS, and Windows, each on `amd64` and `a
 
 ```bash
 # macOS Apple silicon
-curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.0.0/envm_1.0.0_darwin_arm64.tar.gz | tar -xz
+curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.0.1/envm_1.0.1_darwin_arm64.tar.gz | tar -xz
 sudo install envm /usr/local/bin/envm
 
 # Linux x86_64
-curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.0.0/envm_1.0.0_linux_amd64.tar.gz | tar -xz
+curl -sL https://github.com/martinshaw/environment-manager/releases/download/v1.0.1/envm_1.0.1_linux_amd64.tar.gz | tar -xz
 sudo install envm /usr/local/bin/envm
 ```
 
-On Windows, download `envm_1.0.0_windows_amd64.zip` or `envm_1.0.0_windows_arm64.zip` and extract `envm.exe`.
+On Windows, download `envm_1.0.1_windows_amd64.zip` or `envm_1.0.1_windows_arm64.zip` and extract `envm.exe`.
 
 Checksums for every archive are in `checksums.txt` on the same release.
 
@@ -52,7 +52,7 @@ The Go module path is `martinshaw.co/environment-manager`. `go install` works af
 ```
 
 ```bash
-go install martinshaw.co/environment-manager/cmd/envm@v1.0.0
+go install martinshaw.co/environment-manager/cmd/envm@v1.0.1
 ```
 
 Until that page exists, install a release binary. Building from this repository also works:
